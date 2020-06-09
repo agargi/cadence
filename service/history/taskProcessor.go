@@ -70,6 +70,10 @@ type (
 		workerNotificationChans []chan struct{}
 		// duplicate numOfWorker from config.TimerTaskWorkerCount for dynamic config works correctly
 		numOfWorker int
+
+
+		//test
+		metricsScope            map[int]metrics.Scope
 	}
 )
 
@@ -112,7 +116,22 @@ func newTaskProcessor(
 		workerNotificationChans: workerNotificationChans,
 		retryPolicy:             common.CreatePersistanceRetryPolicy(),
 		numOfWorker:             options.workerCount,
+
+		// test
+		metricsScope:            make(map[int]metrics.Scope),
 	}
+
+	start := metrics.TransferQueueProcessorScope
+	end := metrics.TimerStandbyTaskWorkflowBackoffTimerScope
+
+	x := make(map[int]metrics.Scope)
+
+	for i:=start; i<=end; i++ {
+		scope := base.metricsClient.Scope(i).Tagged(metrics.DomainUnknownTag())
+		x[i] = scope
+	}
+
+	base.metricsScope = x
 
 	return base
 }
@@ -233,6 +252,22 @@ FilterLoop:
 	}
 }
 
+
+func (t *taskProcessor) populateScopesForScopeIdx() map[int]metrics.Scope {
+	start := metrics.TransferQueueProcessorScope
+	end := metrics.TimerStandbyTaskWorkflowBackoffTimerScope
+
+	x := make(map[int]metrics.Scope)
+
+	for i:=start; i<=end; i++ {
+		scope := t.metricsClient.Scope(i).Tagged(metrics.DomainUnknownTag())
+		x[i] = scope
+	}
+
+	return x
+}
+
+
 func (t *taskProcessor) processTaskOnce(
 	notificationChan <-chan struct{},
 	task *taskInfo,
@@ -248,19 +283,20 @@ func (t *taskProcessor) processTaskOnce(
 
 	domainID := task.task.GetDomainID()
 
+	startTime := t.timeSource.Now()
+
 	scopeIdx, err = task.processor.process(task)
-	scope, found := t.domainMetricsScopeCache.Get("testDomain", scopeIdx)
+	scope, found := t.metricsScope[scopeIdx]
 
 	if !found {
-		domainTag, err := t.getDomainTagByID(domainID)
+		domainTag, _ := t.getDomainTagByID(domainID)
 		scope = t.metricsClient.Scope(scopeIdx).Tagged(domainTag)
 		// do not cache DomainUnknownTag
-		if err == nil {
-			t.domainMetricsScopeCache.Put("testDomain", scopeIdx, scope)
-		}
+		//if err == nil {
+		//	t.domainMetricsScopeCache.Put("testDomain", scopeIdx, scope)
+		//}
 	}
 
-	startTime := t.timeSource.Now()
 	if task.shouldProcessTask {
 		scope.IncCounter(metrics.TaskRequests)
 		scope.RecordTimer(metrics.TaskProcessingLatency, time.Since(startTime))
